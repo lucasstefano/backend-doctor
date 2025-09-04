@@ -416,12 +416,14 @@ Instruções Detalhadas:
 1. Processamento da Transcrição:
    - Corrija erros gramaticais na "Nova Transcrição".
    - Mantenha a consistência dos papéis ("Médico", "Paciente").
-   - A transcrição processada deve ser um array de objetos, cada objeto representando uma fala única, com os campos:
+   - A transcrição processada deve ser um array de objetos, cada objeto representando uma fala única, com os campos obrigatórios:
      - "speakerTag"
      - "speaker"
      - "text"
      - "timestamp"
      - "isFinal"
+   - ATENÇÃO: O campo "isFinal" DEVE SEMPRE ser \`true\` em todos os itens do processedTranscript.
+   - Caso o texto esteja vazio ("" ou apenas espaços), não deve ser incluído no processedTranscript.
 
 2. Geração da Timeline de Assuntos:
    - Analise o diálogo completo (contexto + nova transcrição).
@@ -436,7 +438,6 @@ Instruções Detalhadas:
 ---
 ${contextString}
 ---
-
 Nova Transcrição para processar:
 ${JSON.stringify(newTranscriptToProcess, null, 2)}
 `;
