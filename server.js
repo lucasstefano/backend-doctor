@@ -167,6 +167,7 @@ io.on('connection', (socket) => {
       encoding: 'WEBM_OPUS',
       sampleRateHertz: config.sampleRateHertz || 48000,
       languageCode: config.lang || 'pt-BR',
+      alternativeLanguageCodes: ['en-US'], 
       enableAutomaticPunctuation: true,
       diarizationConfig: {
         enableSpeakerDiarization: true,
@@ -175,6 +176,7 @@ io.on('connection', (socket) => {
       },
       model: 'telephony',
       useEnhanced: true,
+      
     };
     stopRecognizeStream();
     startRecognizeStream();
@@ -240,6 +242,7 @@ app.post('/batch-transcribe', upload.single('file'), async (req, res) => {
         encoding: 'WEBM_OPUS',
         sampleRateHertz: 48000,
         languageCode: 'pt-BR',
+        alternativeLanguageCodes: ['en-US'], // idiomas adicionais
         enableAutomaticPunctuation: true,
         diarizationConfig: {
           enableSpeakerDiarization: true,
@@ -407,6 +410,13 @@ ${JSON.stringify(context.map(t => ({ speaker: t.speaker, text: t.text })), null,
     // 🧠 PASSO 1: Modificar o prompt para incluir a tarefa da TIMELINE
 const prompt = `
 Você é um assistente de IA especialista em processar transcrições de consultas médicas.
+
+⚙️ Instrução de Idioma:
+- Detecte automaticamente o idioma da "Nova Transcrição".
+- Se o idioma predominante for **inglês**, todas as respostas e o conteúdo do JSON devem ser **em inglês** (inclusive nomes de campos e tópicos da timeline).
+- Caso contrário, use **português** como idioma padrão.
+- NÃO traduza o conteúdo da transcrição; apenas mantenha o idioma original da conversa para todo o processamento.
+
 Suas tarefas são:
 1. Analisar a "Nova Transcrição", usando o "Contexto da Conversa" para manter a consistência na identificação de "Médico" e "Paciente".
 2. Criar e atualizar uma "timeline" (uma lista cronológica) dos principais assuntos discutidos em TODA a conversa (contexto + nova transcrição).
