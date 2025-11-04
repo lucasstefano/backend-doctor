@@ -832,7 +832,7 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // --- Iniciar Servidor ---
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   log('Server', `🚀 Servidor rodando na porta ${PORT}`);
 });
