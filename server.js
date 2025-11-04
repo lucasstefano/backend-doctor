@@ -1,4 +1,4 @@
-
+// index.js
 import 'dotenv/config';
 
 import express from 'express';
@@ -10,7 +10,7 @@ import cors from 'cors';
 import { Storage } from '@google-cloud/storage';
 import { v4 as uuidv4 } from 'uuid';
 
-// ✨ Vertex AI
+// Vertex AI
 import { VertexAI } from '@google-cloud/vertexai';
 
 // --- Funções de Log Padronizadas ---
@@ -20,11 +20,49 @@ const log = (prefix, message, ...args) =>
 // --- Configurações iniciais ---
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+
+// Socket.io configurado para Cloud Run
+const io = new Server(server, { 
+  cors: { 
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+
 const upload = multer();
 
-app.use(cors());
+// CORS configurado para Cloud Run
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+}));
+
 app.use(express.json());
+
+// Health check endpoint para Cloud Run
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    socket: 'enabled',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// WebSocket test endpoint
+app.get('/ws-test', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    socketEnabled: true,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Handle preflight
+app.options('*', cors());
 
 // --- Middleware de Logging de Requisições ---
 app.use((req, res, next) => {
@@ -40,7 +78,7 @@ const vertex_ai = new VertexAI({
   location: process.env.GCLOUD_LOCATION,
 });
 
-const model = 'gemini-2.0-flash-001'; // Modelo atualizado
+const model = 'gemini-2.0-flash-001';
 const generativeModel = vertex_ai.getGenerativeModel({
   model,
   generationConfig: {
@@ -75,7 +113,7 @@ const callVertexAI = async (endpointName, prompt, generationConfig = {}) => {
 // --- WebSocket STT com Automação ---
 // ===================================
 io.on('connection', (socket) => {
-  log('WebSocket', `Cliente conectado: ${socket.id}`);
+  log('WebSocket', `Cliente conectado: ${socket.id} from ${socket.handshake.address}`);
 
   let recognizeStream = null;
   let recognitionConfig = null;
@@ -119,7 +157,7 @@ io.on('connection', (socket) => {
       .on('data', (data) => {
         const result = data.results[0];
         if (result && result.alternatives[0]) {
-          socket.emit('transcript-data', {
+          const transcriptData = {
             text: result.alternatives[0].transcript,
             isFinal: result.isFinal,
             timestamp: new Date().toLocaleTimeString('pt-BR', {
@@ -130,7 +168,10 @@ io.on('connection', (socket) => {
               result.alternatives[0].words?.[
                 result.alternatives[0].words.length - 1
               ]?.speakerTag,
-          });
+          };
+          
+          log('WebSocket', `Enviando transcript: ${transcriptData.text.substring(0, 50)}...`);
+          socket.emit('transcript-data', transcriptData);
         }
       });
 
@@ -176,7 +217,6 @@ io.on('connection', (socket) => {
       },
       model: 'telephony',
       useEnhanced: true,
-      
     };
     stopRecognizeStream();
     startRecognizeStream();
@@ -205,8 +245,8 @@ io.on('connection', (socket) => {
     stopRecognizeStream();
   });
 
-  socket.on('disconnect', () => {
-    log('WebSocket', `Cliente desconectado: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    log('WebSocket', `Cliente desconectado: ${socket.id} - Reason: ${reason}`);
     stopRecognizeStream();
   });
 });
@@ -242,7 +282,7 @@ app.post('/batch-transcribe', upload.single('file'), async (req, res) => {
         encoding: 'WEBM_OPUS',
         sampleRateHertz: 48000,
         languageCode: 'pt-BR',
-        alternativeLanguageCodes: ['en-US'], // idiomas adicionais
+        alternativeLanguageCodes: ['en-US'],
         enableAutomaticPunctuation: true,
         diarizationConfig: {
           enableSpeakerDiarization: true,
@@ -292,7 +332,6 @@ app.post('/batch-transcribe', upload.single('file'), async (req, res) => {
   }
 });
 
-
 // ==========================
 // --- Endpoints Vertex AI ---
 // ==========================
@@ -324,7 +363,6 @@ app.post('/api/generate-title', async (req, res) => {
     res.status(500).json({ error: 'Ocorreu um erro no servidor ao gerar o título.' });
   }
 });
-
 
 // --- MELHORAR ANAMNESE ---
 app.post('/api/melhorar-anamnese', async (req, res) => {
@@ -376,9 +414,7 @@ app.post('/api/melhorar-anamnese', async (req, res) => {
     }
 });
 
-// --- ROTA DE TRANSCRIÇÃO IA (CORRIGE E IDENTIFICA FALANTES) ---
-// app.post('/api/generate-ia-transcription', ...) - Substitua sua rota por esta
-
+// --- ROTA DE TRANSCRIÇÃO IA ---
 app.post('/api/generate-ia-transcription', async (req, res) => {
   try {
     const { transcription } = req.body;
@@ -407,8 +443,7 @@ ${JSON.stringify(context.map(t => ({ speaker: t.speaker, text: t.text })), null,
 `
       : "Esta é a primeira fala da conversa.";
 
-    // 🧠 PASSO 1: Modificar o prompt para incluir a tarefa da TIMELINE
-const prompt = `
+    const prompt = `
 Você é um assistente de IA especialista em processar transcrições de consultas médicas.
 
 ⚙️ Instrução de Idioma:
@@ -452,12 +487,11 @@ Nova Transcrição para processar:
 ${JSON.stringify(newTranscriptToProcess, null, 2)}
 `;
 
-
     const request = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: 4048,
-        temperature: 0.3, // Um pouco mais de temperatura para ajudar na criatividade da timeline
+        temperature: 0.3,
       },
     };
 
@@ -472,9 +506,7 @@ ${JSON.stringify(newTranscriptToProcess, null, 2)}
     
     let parsedJson;
     try {
-      // 🧠 PASSO 2: Fazer o parse da estrutura JSON completa { processedTranscript, timeline }
       parsedJson = JSON.parse(generatedText);
-      // Validação básica da estrutura
       if (!parsedJson.processedTranscript || !Array.isArray(parsedJson.timeline)) {
         throw new Error("A resposta da IA não contém os campos 'processedTranscript' e 'timeline'.");
       }
@@ -483,7 +515,6 @@ ${JSON.stringify(newTranscriptToProcess, null, 2)}
       return res.status(500).json({ error: "Falha ao processar resposta da IA. Formato JSON inválido." });
     }
 
-    // 🧠 PASSO 3: Retornar o objeto completo no campo 'data'
     res.status(200).json({ data: parsedJson });
 
   } catch (error) {
@@ -564,7 +595,6 @@ app.post('/api/generate-anamnese', async (req, res) => {
   }
 });
 
-
 // --- OBTENÇÃO DE URL DE ÁUDIO ---
 app.get('/audio-url/:recordingId', async (req, res) => {
   const endpointName = '/audio-url/:recordingId';
@@ -595,42 +625,35 @@ app.get('/audio-url/:recordingId', async (req, res) => {
     res.status(500).json({ error: 'Falha ao gerar URL de áudio.' });
   }
 });
+
 app.delete('/audio/:recordingId', async (req, res) => {
   const endpointName = '/audio/:recordingId';
   try {
-    // 1. O parâmetro `recordingId` já vem decodificado pelo Express.
-    // Se o frontend enviou um nome de arquivo codificado, aqui ele já estará no formato original.
     const { recordingId } = req.params;
 
     if (!recordingId) {
       return res.status(400).json({ error: 'ID de gravação inválido.' });
     }
 
-    // 2. Obter o nome do bucket a partir das variáveis de ambiente.
-    // Certifique-se de que a variável GCLOUD_BUCKET_NAME está definida no seu ambiente (.env ou no servidor).
     const bucketName = process.env.GCLOUD_BUCKET_NAME;
     if (!bucketName) {
         console.error('A variável de ambiente GCLOUD_BUCKET_NAME não está definida.');
         return res.status(500).json({ error: 'Configuração do servidor incompleta.'});
     }
 
-    // 3. Obter a referência do arquivo no Google Cloud Storage.
     const file = storage.bucket(bucketName).file(recordingId);
 
-    // 4. Verificar se o arquivo realmente existe antes de tentar deletar.
     const [exists] = await file.exists();
     if (!exists) {
       console.log(`Arquivo não encontrado no bucket '${bucketName}': ${recordingId}`);
       return res.status(404).json({ error: 'Arquivo de áudio não encontrado.' });
     }
 
-    // 5. Deletar o arquivo.
     await file.delete();
     console.log(`Arquivo ${recordingId} removido do bucket ${bucketName} com sucesso.`);
     res.status(200).json({ message: 'Arquivo de áudio removido com sucesso.' });
 
   } catch (err) {
-    // 6. Tratamento de erros (ex: problemas de permissão, falha na API do Google).
     console.error(`Erro em ${endpointName}:`, err);
     res.status(500).json({ error: 'Falha interna ao remover arquivo de áudio.' });
   }
@@ -642,12 +665,11 @@ app.post("/api/upload-documento", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Nenhum arquivo enviado." });
     }
 
-    const bucketName = process.env.GCLOUD_BUCKET_DOC; // certifique-se de ter essa variável no .env
-    const bucket = storage.bucket(bucketName); // define o bucket
+    const bucketName = process.env.GCLOUD_BUCKET_DOC;
+    const bucket = storage.bucket(bucketName);
     const gcsFileName = `${Date.now()}_${req.file.originalname}`;
     const file = bucket.file(gcsFileName);
 
-    // Upload do arquivo
     await file.save(req.file.buffer, {
       contentType: req.file.mimetype,
       resumable: false,
@@ -676,7 +698,6 @@ app.post("/api/process-and-summarize-documents", upload.array("documentos", 5), 
       const fileBuffer = file.buffer;
       const mimeType = file.mimetype;
 
-      // Inicializa o array de partes
       const promptParts = [];
       let promptText = "";
 
@@ -695,7 +716,6 @@ app.post("/api/process-and-summarize-documents", upload.array("documentos", 5), 
         };
       }
 
-      // Adiciona as partes ao array promptParts
       promptParts.push({ text: promptText });
       promptParts.push({
         inlineData: {
@@ -704,7 +724,6 @@ app.post("/api/process-and-summarize-documents", upload.array("documentos", 5), 
         },
       });
 
-      // Estrutura final da requisição
       const request = {
         contents: [{ role: 'user', parts: promptParts }],
         generationConfig: {
@@ -712,9 +731,6 @@ app.post("/api/process-and-summarize-documents", upload.array("documentos", 5), 
           temperature: 0.3,
         },
       };
-
-      // Log para debug
-      console.log("Objeto da requisição enviado para a Vertex AI:", JSON.stringify(request, null, 2));
 
       const result = await generativeModel.generateContent(request);
       const summaryText = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -813,11 +829,9 @@ app.post("/api/chat", async (req, res) => {
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (jsonMatch && jsonMatch[0]) {
         const responseObject = JSON.parse(jsonMatch[0]);
-        // Envia a resposta JSON diretamente, sem precisar de ifs
         res.json(responseObject);
       } else {
         console.warn("A resposta da IA não continha um JSON válido.");
-        // Resposta de fallback caso a IA falhe
         res.status(500).json({ mensagem: "Erro: formato de resposta da IA inválido." });
       }
     } catch (error) {
@@ -835,4 +849,6 @@ app.post("/api/chat", async (req, res) => {
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   log('Server', `🚀 Servidor rodando na porta ${PORT}`);
+  log('Server', `🔌 WebSockets habilitados para Cloud Run`);
+  log('Server', `🌐 Health check disponível em /health`);
 });
